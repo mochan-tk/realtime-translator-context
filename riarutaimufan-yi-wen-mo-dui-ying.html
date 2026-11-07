@@ -1,0 +1,1234 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>リアルタイム翻訳 文脈対応</title>
+    <style>
+      :root {
+        --bg: #f6f4ee;
+        --surface: #ffffff;
+        --surface-2: #efede5;
+        --ink: #1e2422;
+        --muted: #5d6862;
+        --line: #ddd8ca;
+        --accent: #0c6b5c;
+        --accent-strong: #095447;
+        --accent-ink: #ffffff;
+        --warn: #a35b06;
+        --warn-bg: #fdf3e0;
+        --danger: #b3261e;
+        --danger-bg: #fdecea;
+        --ok: #0c6b5c;
+        --radius: 10px;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #121614;
+          --surface: #1b211e;
+          --surface-2: #232a26;
+          --ink: #e9edea;
+          --muted: #9daba3;
+          --line: #303a34;
+          --accent: #2cbfa3;
+          --accent-strong: #5fd6bf;
+          --accent-ink: #0b1512;
+          --warn: #e8a33d;
+          --warn-bg: #2e2413;
+          --danger: #f08079;
+          --danger-bg: #331b19;
+          --ok: #2cbfa3;
+        }
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+      }
+      main { max-width: 1080px; margin: 0 auto; padding: 12px 14px 40px; }
+      h2 { font-size: 17px; margin: 0 0 10px; letter-spacing: .02em; }
+      h3 { font-size: 14px; margin: 18px 0 8px; color: var(--ink); }
+      p { margin: 6px 0; }
+      .small { font-size: 12.5px; color: var(--muted); }
+      .note-warn { color: var(--warn); }
+
+      /* ===== status bar ===== */
+      .statusbar {
+        display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+        background: var(--surface); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
+      }
+      .badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 12.5px; font-weight: 700; padding: 3px 10px;
+        border-radius: 999px; border: 1px solid var(--line);
+        background: var(--surface-2); color: var(--muted);
+        white-space: nowrap;
+      }
+      .badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+      .badge.live { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+      .badge.live .dot { background: #fff; animation: pulse 1.6s infinite; }
+      .badge.connecting { color: var(--warn); border-color: var(--warn); }
+      .badge.connecting .dot { background: var(--warn); animation: pulse 0.9s infinite; }
+      .badge.recovering { color: var(--warn); background: var(--warn-bg); border-color: var(--warn); }
+      .badge.recovering .dot { background: var(--warn); animation: pulse 0.9s infinite; }
+      .badge.error { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }
+      .badge.error .dot { background: var(--danger); }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+      @media (prefers-reduced-motion: reduce) { .badge .dot { animation: none; } }
+      .timer { font-family: var(--mono); font-size: 13px; color: var(--muted); margin-left: auto; }
+      .timer.warn { color: var(--warn); font-weight: 700; }
+
+      /* ===== tabs ===== */
+      .tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 2px solid var(--line); }
+      .tabs button {
+        appearance: none; border: 0; background: none; cursor: pointer;
+        font: inherit; font-weight: 700; font-size: 14.5px; color: var(--muted);
+        padding: 8px 14px; border-bottom: 3px solid transparent; margin-bottom: -2px;
+      }
+      .tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+      .tabpanel[hidden] { display: none; }
+
+      /* ===== console layout ===== */
+      .console-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      @media (min-width: 900px) {
+        .console-grid { grid-template-columns: 1fr 1fr; }
+        .span2 { grid-column: 1 / -1; }
+      }
+      .card {
+        background: var(--surface); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 14px;
+      }
+      .langrow { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+      .langrow .field { flex: 1 1 130px; }
+      label.lbl { display: block; font-size: 12.5px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
+      select, input[type="text"], input[type="password"], textarea {
+        width: 100%; font: inherit; font-size: 15px; color: var(--ink);
+        background: var(--surface); border: 1px solid var(--line);
+        border-radius: 8px; padding: 9px 10px;
+      }
+      textarea { resize: vertical; }
+      select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+      .swapbtn {
+        appearance: none; border: 1px solid var(--line); background: var(--surface-2);
+        border-radius: 8px; width: 42px; height: 42px; font-size: 18px; cursor: pointer; color: var(--ink); flex: none;
+      }
+      @media (max-width: 480px) {
+        .langrow { flex-wrap: nowrap; }
+        .langrow .field { flex: 1 1 0; min-width: 0; }
+        .langrow select { font-size: 13.5px; padding: 9px 6px; }
+        .swapbtn { width: 38px; height: 38px; }
+      }
+      .dirrow { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+
+      .btn {
+        appearance: none; border: 1px solid var(--line); background: var(--surface);
+        color: var(--ink); font: inherit; font-weight: 700; font-size: 14.5px;
+        border-radius: 8px; padding: 10px 16px; cursor: pointer;
+      }
+      .btn:disabled { opacity: .45; cursor: not-allowed; }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+      .btn.primary:hover:not(:disabled) { background: var(--accent-strong); }
+      .btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+      .btn.ghost { background: var(--surface-2); }
+      .btn.big { font-size: 17px; padding: 14px 22px; width: 100%; }
+      .btn.attention { background: var(--warn); border-color: var(--warn); color: #fff; width: 100%; font-size: 16px; padding: 13px; }
+      .controls { display: grid; gap: 8px; }
+      .controls .row { display: flex; gap: 8px; flex-wrap: wrap; }
+      .controls .row .btn { flex: 1 1 auto; }
+
+      .live-pane { min-height: 92px; }
+      .live-pane .pane-label { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .06em; margin-bottom: 4px; }
+      .live-text { font-size: 19px; line-height: 1.5; min-height: 1.5em; overflow-wrap: anywhere; }
+      .live-text.tgt { font-size: 21px; font-weight: 600; }
+      .live-text .placeholder { color: var(--muted); font-size: 14px; font-weight: 400; }
+
+      .history { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 46vh; overflow-y: auto; }
+      .history li { border-top: 1px solid var(--line); padding-top: 8px; }
+      .history li:first-child { border-top: 0; padding-top: 0; }
+      .history .src { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+      .history .tgt { font-size: 16.5px; font-weight: 600; overflow-wrap: anywhere; }
+      .history .meta { font-size: 11.5px; color: var(--muted); font-family: var(--mono); display: flex; gap: 8px; }
+      .tag { font-weight: 700; color: var(--warn); }
+
+      /* segmented radios */
+      .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+      .seg label {
+        border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px;
+        font-size: 13.5px; font-weight: 600; cursor: pointer; background: var(--surface);
+        display: inline-flex; align-items: center; gap: 6px;
+      }
+      .seg input { margin: 0; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+      .seg label:has(input:checked) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+      .seg label:has(input:focus-visible) { outline: 2px solid var(--accent); }
+      .opt-block { margin-bottom: 16px; }
+      .opt-block > .lbl { font-size: 13px; }
+      .switchrow { display: flex; align-items: center; gap: 10px; }
+      .switchrow input[type="checkbox"] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+
+      .log {
+        font-family: var(--mono); font-size: 11.5px; line-height: 1.6;
+        background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+        padding: 10px; height: 220px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      .keyrow { display: flex; gap: 8px; flex-wrap: wrap; }
+      .keyrow input { flex: 1 1 220px; }
+      footer { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 12px; }
+      .banner {
+        border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px; font-size: 14px;
+      }
+      .banner.warn { background: var(--warn-bg); border: 1px solid var(--warn); color: var(--ink); }
+      .banner[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <!-- ===== status bar ===== -->
+      <div class="statusbar" role="status" aria-live="polite">
+        <span class="badge" id="connBadge"><span class="dot"></span><span id="connText">未接続</span></span>
+        <span class="badge" id="playBadge"><span class="dot"></span><span id="playText">再生：待機</span></span>
+        <span class="timer" id="timerText" title="セッション経過時間（目安）">00:00 / 目安15分</span>
+      </div>
+
+      <div class="banner warn" id="warnBanner" hidden>
+        セッション開始から10分が経過しました（目安）。15分でアプリが自動停止します。
+      </div>
+      <div class="banner warn" id="recoverBanner" hidden>
+        接続が切れました。<span id="recoverText">接続回復待ち…</span>
+      </div>
+      <button class="btn attention" id="playBtn" hidden>訳音声を再生する</button>
+
+      <!-- ===== tabs ===== -->
+      <div class="tabs" role="tablist" aria-label="画面切替">
+        <button role="tab" id="tab-main" aria-selected="true" data-tab="main">通訳</button>
+        <button role="tab" id="tab-opts" aria-selected="false" data-tab="opts">文脈オプション</button>
+        <button role="tab" id="tab-set" aria-selected="false" data-tab="set">設定・診断</button>
+      </div>
+
+      <!-- ===== main panel ===== -->
+      <section class="tabpanel" id="panel-main" role="tabpanel" aria-labelledby="tab-main">
+        <div class="console-grid">
+          <div class="card">
+            <div class="langrow">
+              <div class="field">
+                <label class="lbl" for="langFrom">話す言語</label>
+                <select id="langFrom"></select>
+              </div>
+              <button class="swapbtn" id="swapBtn" type="button" aria-label="言語を入れ替え" title="言語を入れ替え">⇄</button>
+              <div class="field">
+                <label class="lbl" for="langTo">訳す言語</label>
+                <select id="langTo"></select>
+              </div>
+            </div>
+            <div class="dirrow">
+              <div class="seg" role="radiogroup" aria-label="翻訳方向">
+                <label><input type="radio" name="direction" value="oneway" checked />片方向（固定）</label>
+                <label><input type="radio" name="direction" value="both" />双方向（自動判別）</label>
+              </div>
+            </div>
+            <p class="small" id="dirHint">選択した向きに固定して訳します。</p>
+          </div>
+
+          <div class="card">
+            <div class="controls">
+              <button class="btn primary big" id="startBtn">通訳開始</button>
+              <button class="btn danger big" id="stopBtn" hidden>停止</button>
+              <div class="row">
+                <button class="btn ghost" id="muteBtn" disabled>マイクをミュート</button>
+                <button class="btn ghost" id="retranslateBtn" disabled>直前を訳し直す</button>
+              </div>
+            </div>
+            <p class="small">ミュート中もセッションは続くため課金は止まりません。止めたいときは「停止」を押してください。セッションは10分で警告、15分で自動停止します（いずれも目安）。</p>
+          </div>
+
+          <div class="card live-pane">
+            <div class="pane-label">原文（聞き取り）</div>
+            <div class="live-text" id="liveSrc"><span class="placeholder">話した内容がここに文字で出ます</span></div>
+          </div>
+          <div class="card live-pane">
+            <div class="pane-label">訳文</div>
+            <div class="live-text tgt" id="liveTgt"><span class="placeholder">訳がここに出て、音声でも流れます</span></div>
+          </div>
+
+          <div class="card span2">
+            <h2>テキスト入力（声を出せないとき）</h2>
+            <div class="keyrow">
+              <input type="text" id="textInput" placeholder="訳したい文を入力" autocomplete="off" />
+              <button class="btn primary" id="textSendBtn" disabled>文脈付きで訳して読み上げ</button>
+            </div>
+            <p class="small">通訳セッション中に使えます。入力した文を、いまの文脈・場面・用語集に沿って訳して読み上げます。</p>
+          </div>
+
+          <div class="card span2">
+            <h2>履歴</h2>
+            <ul class="history" id="historyList">
+              <li class="small" id="historyEmpty">まだ履歴はありません。</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== options panel ===== -->
+      <section class="tabpanel" id="panel-opts" role="tabpanel" aria-labelledby="tab-opts" hidden>
+        <div class="card">
+          <h2>文脈チューニング</h2>
+          <p class="small">場面・用語集・文脈は指示文としてモデルへ渡します。「設定を反映」を押すと、接続中でも session.update でその場で反映します（モデル変更のみ再接続が必要）。</p>
+
+          <div class="opt-block">
+            <span class="lbl">文脈の範囲</span>
+            <div class="seg" role="radiogroup" aria-label="文脈の範囲">
+              <label><input type="radio" name="ctxRange" value="prev" />直前のみ</label>
+              <label><input type="radio" name="ctxRange" value="minutes" checked />直近数分</label>
+              <label><input type="radio" name="ctxRange" value="whole" />会話全体＋要約</label>
+            </div>
+            <p class="small">アプリ側で保持した原文・訳文の履歴から、範囲に応じた文脈（全体の場合は古い部分を要約に圧縮）を指示文へ組み込みます。</p>
+          </div>
+
+          <div class="opt-block">
+            <label class="lbl" for="scenePreset">場面プリセット</label>
+            <select id="scenePreset">
+              <option value="travel">旅行一般</option>
+              <option value="hotel">ホテル</option>
+              <option value="restaurant">飲食店</option>
+              <option value="transport">交通</option>
+              <option value="shopping">買い物・価格交渉</option>
+              <option value="makerfaire">Maker Faire・技術商談</option>
+              <option value="medical">病院・緊急</option>
+            </select>
+          </div>
+
+          <div class="opt-block">
+            <label class="lbl" for="sceneMemo">場面メモ（自由記述）</label>
+            <textarea id="sceneMemo" rows="3" placeholder="例：深圳のホテルでチェックイン中。相手はフロントスタッフ。予約名はタカシ カワモト。"></textarea>
+          </div>
+
+          <div class="opt-block">
+            <label class="lbl" for="glossary">用語集（1行に1件）</label>
+            <textarea id="glossary" rows="5" placeholder="例：&#10;Maker Faire = Maker Faire（訳さない）&#10;杨枝甘露 = ヤンジーガンルー&#10;芋圓 = 芋圓（訳さない語）"></textarea>
+            <p class="small">「原文 = 訳語」の形で指定訳語を、「訳さない語」と書くと原語のまま出すよう指示します。</p>
+          </div>
+
+          <div class="opt-block">
+            <span class="lbl">訳し方</span>
+            <div class="seg" role="radiogroup" aria-label="訳し方">
+              <label><input type="radio" name="style" value="faithful" />忠実</label>
+              <label><input type="radio" name="style" value="natural" checked />自然</label>
+              <label><input type="radio" name="style" value="gist" />要点重視</label>
+            </div>
+          </div>
+
+          <div class="opt-block">
+            <span class="lbl">丁寧さ</span>
+            <div class="seg" role="radiogroup" aria-label="丁寧さ">
+              <label><input type="radio" name="politeness" value="polite" />丁寧</label>
+              <label><input type="radio" name="politeness" value="normal" checked />普通</label>
+              <label><input type="radio" name="politeness" value="casual" />カジュアル</label>
+            </div>
+          </div>
+
+          <div class="opt-block">
+            <span class="lbl">速度と精度</span>
+            <div class="seg" role="radiogroup" aria-label="速度と精度">
+              <label><input type="radio" name="speed" value="fast" />速さ優先</label>
+              <label><input type="radio" name="speed" value="balanced" checked />バランス</label>
+              <label><input type="radio" name="speed" value="accurate" />精度優先</label>
+            </div>
+            <p class="small">
+              速さ優先：gpt-realtime-2.1-mini＋発話終了の判定を速く（eagerness 高）／
+              バランス：gpt-realtime-2.1＋eagerness 中／
+              精度優先：gpt-realtime-2.1＋eagerness 低（長めに聞いてから訳す）。<br />
+              <span class="note-warn">モデルの変更は再接続時に適用されます。</span>eagerness とその他の設定は「設定を反映」で接続中でも切り替わります。
+            </p>
+          </div>
+
+          <div class="opt-block">
+            <div class="switchrow">
+              <input type="checkbox" id="numericStrict" checked />
+              <label for="numericStrict"><strong>数値厳密モード</strong>（価格・日時・人数・住所などの数値を改変せず正確に訳す）</label>
+            </div>
+          </div>
+
+          <div class="opt-block">
+            <label class="lbl" for="voiceSel">訳音声の声</label>
+            <select id="voiceSel">
+              <option value="marin">marin（女性）</option>
+              <option value="cedar">cedar（男性）</option>
+              <option value="alloy">alloy</option>
+              <option value="shimmer">shimmer</option>
+              <option value="verse">verse</option>
+            </select>
+          </div>
+
+          <button class="btn primary big" id="applyBtn">設定を反映</button>
+          <p class="small" id="applyMsg" role="status"></p>
+        </div>
+      </section>
+
+      <!-- ===== settings / diagnostics panel ===== -->
+      <section class="tabpanel" id="panel-set" role="tabpanel" aria-labelledby="tab-set" hidden>
+        <div class="card">
+          <h2>OpenAI APIキー（BYOK）</h2>
+          <p class="small">自分の OpenAI API キーを貼ってください。キーはこの端末の localStorage（兄弟アプリと共用の保存先）にのみ保存し、ページや診断ログには含めません。OpenAI の通常の Realtime API を使うため、<strong>翻訳専用モデル版より割高</strong>になります。</p>
+          <div class="keyrow">
+            <input type="password" id="apiKeyInput" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+            <button class="btn primary" id="saveKeyBtn">キーを保存</button>
+            <button class="btn ghost" id="testKeyBtn">接続テスト</button>
+            <button class="btn ghost" id="deleteKeyBtn">キーを削除</button>
+          </div>
+          <p class="small" id="keyStatus" role="status"></p>
+
+          <h3>診断ログ</h3>
+          <div class="log" id="logBox" aria-label="診断ログ"></div>
+          <div class="keyrow" style="margin-top:8px">
+            <button class="btn ghost" id="copyLogBtn">ログをコピー</button>
+            <button class="btn ghost" id="clearLogBtn">ログを消去</button>
+          </div>
+          <p class="small">認証系APIが異常を返した場合、応答本文はログに出さず、HTTPステータスのみ記録します。</p>
+        </div>
+      </section>
+
+      <footer>
+        <p class="small">
+          このアプリは OpenAI の通常の Realtime API（汎用モデル）を通訳役として使うため、翻訳専用モデルを使う方式より割高です。
+          文脈・場面・用語集を指示として渡せる代わりに、応答の逸脱を抑える指示で通訳に固定しています。
+          セッション時間の10分警告・15分自動停止は目安です。
+        </p>
+      </footer>
+    </main>
+
+    <audio id="remoteAudio" autoplay playsinline></audio>
+
+    <script>
+    'use strict';
+    /* =========================================================
+       リアルタイム翻訳 文脈対応
+       OpenAI Realtime API (GA) + WebRTC
+       - POST /v1/realtime/client_secrets で短命シークレット発行
+       - POST /v1/realtime/calls へ SDP offer
+       - data channel "oai-events" でイベント送受信
+       ========================================================= */
+
+    var LS_KEY = 'rtai.openaiApiKey';
+    var API_BASE = 'https://api.openai.com/v1';
+
+    var LANGS = [
+      { code: 'ja',    name: '日本語',         en: 'Japanese',            tr: 'ja' },
+      { code: 'en',    name: '英語',           en: 'English',             tr: 'en' },
+      { code: 'zh-CN', name: '中国語（簡体字）', en: 'Simplified Chinese',  tr: 'zh' },
+      { code: 'zh-TW', name: '中国語（繁体字）', en: 'Traditional Chinese', tr: 'zh' },
+      { code: 'ko',    name: '韓国語',         en: 'Korean',              tr: 'ko' },
+      { code: 'es',    name: 'スペイン語',     en: 'Spanish',             tr: 'es' },
+      { code: 'fr',    name: 'フランス語',     en: 'French',              tr: 'fr' },
+      { code: 'de',    name: 'ドイツ語',       en: 'German',              tr: 'de' },
+      { code: 'it',    name: 'イタリア語',     en: 'Italian',             tr: 'it' },
+      { code: 'pt',    name: 'ポルトガル語',   en: 'Portuguese',          tr: 'pt' },
+      { code: 'ru',    name: 'ロシア語',       en: 'Russian',             tr: 'ru' },
+      { code: 'th',    name: 'タイ語',         en: 'Thai',                tr: 'th' }
+    ];
+    function langByCode(c) { for (var i = 0; i < LANGS.length; i++) if (LANGS[i].code === c) return LANGS[i]; return LANGS[0]; }
+
+    var SCENES = {
+      travel:     'General travel conversation (tourist asking locals, staff, or drivers).',
+      hotel:      'Hotel front desk conversation: check-in/check-out, room requests, billing, amenities.',
+      restaurant: 'Restaurant conversation: ordering food, allergies, recommendations, paying the bill.',
+      transport:  'Transportation conversation: stations, tickets, directions, delays, taxis and transit.',
+      shopping:   'Shopping and price negotiation: prices, discounts, sizes, stock, payment. Numbers and prices must be exact.',
+      makerfaire: 'Maker Faire / technical business discussion at an exhibition booth: product specs, demos, partnerships, quantities and schedules. Keep technical terms and product names accurate.',
+      medical:    'Hospital / emergency conversation: symptoms, pain, medication, insurance, urgent requests. Accuracy is critical; translate plainly and completely.'
+    };
+    var SPEED = {
+      fast:     { model: 'gpt-realtime-2.1-mini', eagerness: 'high' },
+      balanced: { model: 'gpt-realtime-2.1',      eagerness: 'medium' },
+      accurate: { model: 'gpt-realtime-2.1',      eagerness: 'low' }
+    };
+
+    /* ---------- DOM ---------- */
+    function $(id) { return document.getElementById(id); }
+    var els = {
+      connBadge: $('connBadge'), connText: $('connText'),
+      playBadge: $('playBadge'), playText: $('playText'),
+      timerText: $('timerText'), warnBanner: $('warnBanner'),
+      recoverBanner: $('recoverBanner'), recoverText: $('recoverText'),
+      playBtn: $('playBtn'),
+      langFrom: $('langFrom'), langTo: $('langTo'), swapBtn: $('swapBtn'), dirHint: $('dirHint'),
+      startBtn: $('startBtn'), stopBtn: $('stopBtn'), muteBtn: $('muteBtn'), retranslateBtn: $('retranslateBtn'),
+      liveSrc: $('liveSrc'), liveTgt: $('liveTgt'),
+      textInput: $('textInput'), textSendBtn: $('textSendBtn'),
+      historyList: $('historyList'), historyEmpty: $('historyEmpty'),
+      scenePreset: $('scenePreset'), sceneMemo: $('sceneMemo'), glossary: $('glossary'),
+      numericStrict: $('numericStrict'), voiceSel: $('voiceSel'),
+      applyBtn: $('applyBtn'), applyMsg: $('applyMsg'),
+      apiKeyInput: $('apiKeyInput'), saveKeyBtn: $('saveKeyBtn'), testKeyBtn: $('testKeyBtn'),
+      deleteKeyBtn: $('deleteKeyBtn'), keyStatus: $('keyStatus'),
+      logBox: $('logBox'), copyLogBtn: $('copyLogBtn'), clearLogBtn: $('clearLogBtn'),
+      remoteAudio: $('remoteAudio')
+    };
+
+    /* ---------- log ---------- */
+    function ts() {
+      var d = new Date();
+      function p(n, l) { n = String(n); while (n.length < (l || 2)) n = '0' + n; return n; }
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3);
+    }
+    function log(msg) {
+      var line = '[' + ts() + '] ' + msg;
+      els.logBox.textContent += (els.logBox.textContent ? '\n' : '') + line;
+      els.logBox.scrollTop = els.logBox.scrollHeight;
+    }
+
+    /* ---------- options ---------- */
+    function radioVal(name) {
+      var el = document.querySelector('input[name="' + name + '"]:checked');
+      return el ? el.value : '';
+    }
+    function getOptions() {
+      return {
+        ctxRange: radioVal('ctxRange') || 'minutes',
+        scene: els.scenePreset.value,
+        sceneMemo: els.sceneMemo.value.trim(),
+        glossary: els.glossary.value.trim(),
+        style: radioVal('style') || 'natural',
+        politeness: radioVal('politeness') || 'normal',
+        speed: radioVal('speed') || 'balanced',
+        numericStrict: els.numericStrict.checked,
+        voice: els.voiceSel.value,
+        direction: radioVal('direction') || 'oneway',
+        from: els.langFrom.value,
+        to: els.langTo.value
+      };
+    }
+
+    /* ---------- history (app-side) ---------- */
+    var turns = []; // {src, tgt, kind: 'live'|'retranslate'|'text', at: epoch ms}
+    var pendingForcedTurn = null; // turn object awaiting the next response (retranslate / text input)
+
+    function renderHistory() {
+      els.historyList.innerHTML = '';
+      if (!turns.length) {
+        var li = document.createElement('li');
+        li.className = 'small'; li.textContent = 'まだ履歴はありません。';
+        els.historyList.appendChild(li);
+        return;
+      }
+      for (var i = turns.length - 1; i >= 0; i--) {
+        var t = turns[i];
+        var item = document.createElement('li');
+        var meta = document.createElement('div');
+        meta.className = 'meta';
+        var time = document.createElement('span');
+        var d = new Date(t.at);
+        time.textContent = (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+        meta.appendChild(time);
+        if (t.kind === 'retranslate') { var tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = '訳し直し'; meta.appendChild(tg); }
+        if (t.kind === 'text') { var tg2 = document.createElement('span'); tg2.className = 'tag'; tg2.textContent = 'テキスト入力'; meta.appendChild(tg2); }
+        var src = document.createElement('div');
+        src.className = 'src'; src.textContent = t.src || '（原文未確定）';
+        var tgt = document.createElement('div');
+        tgt.className = 'tgt'; tgt.textContent = t.tgt || '…';
+        item.appendChild(meta); item.appendChild(src); item.appendChild(tgt);
+        els.historyList.appendChild(item);
+      }
+    }
+    function earliestTurnMissing(field) {
+      for (var i = 0; i < turns.length; i++) if (!turns[i][field]) return turns[i];
+      return null;
+    }
+    function newTurn(kind) {
+      var t = { src: '', tgt: '', kind: kind || 'live', at: Date.now() };
+      turns.push(t);
+      if (turns.length > 200) turns.splice(0, turns.length - 200);
+      return t;
+    }
+
+    function buildContextBlock(opts) {
+      var done = turns.filter(function (t) { return t.src && t.tgt; });
+      if (!done.length) return '';
+      function fmt(t) { return '- Original: ' + t.src + '\n  Translation: ' + t.tgt; }
+      if (opts.ctxRange === 'prev') {
+        return 'Context — the immediately preceding exchange only:\n' + fmt(done[done.length - 1]);
+      }
+      if (opts.ctxRange === 'whole') {
+        var recent = done.slice(-6);
+        var older = done.slice(0, Math.max(0, done.length - 6));
+        var out = '';
+        if (older.length) {
+          var digest = older.map(function (t) {
+            var s = t.src.length > 42 ? t.src.slice(0, 42) + '…' : t.src;
+            var g = t.tgt.length > 42 ? t.tgt.slice(0, 42) + '…' : t.tgt;
+            return '- ' + s + ' → ' + g;
+          }).join('\n');
+          out += 'Summary of the earlier conversation (condensed):\n' + digest + '\n';
+        }
+        out += 'Recent exchanges (verbatim):\n' + recent.map(fmt).join('\n');
+        return out;
+      }
+      // minutes (default): last ~3 minutes, max 10 turns
+      var cutoff = Date.now() - 3 * 60 * 1000;
+      var recentM = done.filter(function (t) { return t.at >= cutoff; }).slice(-10);
+      if (!recentM.length) recentM = done.slice(-3);
+      return 'Context — recent exchanges (last few minutes):\n' + recentM.map(fmt).join('\n');
+    }
+
+    function buildInstructions(opts) {
+      var from = langByCode(opts.from), to = langByCode(opts.to);
+      var lines = [];
+      lines.push('You are a professional simultaneous interpreter. Your ONLY job is to translate what the speaker says. Translate ONLY — never answer questions, never respond to the content of the speech, never add explanations, opinions, greetings, or commentary of your own. If the speaker asks a question, translate the question itself; do not answer it. If the input is silence, noise, or unintelligible, say nothing.');
+      if (opts.direction === 'both') {
+        lines.push('Direction: BIDIRECTIONAL between ' + from.en + ' and ' + to.en + '. Detect which of these two languages each utterance is in, and translate it into the OTHER language. Never translate into the same language that was spoken.');
+      } else {
+        lines.push('Direction: ONE-WAY. Translate every utterance from ' + from.en + ' into ' + to.en + ', regardless of content. If speech in another language is heard, still translate its meaning into ' + to.en + ' when it is ' + from.en + '; otherwise stay silent.');
+      }
+      if (opts.style === 'faithful') lines.push('Style: FAITHFUL. Stay close to the original wording and sentence structure; do not paraphrase or omit details.');
+      else if (opts.style === 'gist') lines.push('Style: GIST. Convey the essential points concisely; drop filler and repetition, but never drop facts, names, or numbers.');
+      else lines.push('Style: NATURAL. Produce fluent, natural ' + to.en + ' as a native speaker would say it, resolving pronouns and omissions from context where the target language needs them.');
+      if (opts.politeness === 'polite') lines.push('Register: POLITE and courteous — use honorific/polite forms appropriate for service and business settings in the target language.');
+      else if (opts.politeness === 'casual') lines.push('Register: CASUAL and friendly — plain, relaxed forms as between friends.');
+      else lines.push('Register: NEUTRAL standard politeness.');
+      if (opts.numericStrict) lines.push('NUMBERS — STRICT MODE: Reproduce ALL numbers exactly as spoken: prices, amounts, dates, times, durations, counts of people, quantities, phone numbers, and addresses. Never round, convert, approximate, or omit any number. In the translated text output, write the numbers so they appear exactly.');
+      lines.push('Scene: ' + (SCENES[opts.scene] || SCENES.travel));
+      if (opts.sceneMemo) lines.push('Scene notes from the user: ' + opts.sceneMemo);
+      if (opts.glossary) {
+        lines.push('Glossary — follow these term rules exactly. Lines in the form "source = target" mean: always translate that source term as the given target. Lines asking to keep a term untranslated mean: output that term exactly as-is in the original language.\n' + opts.glossary);
+      }
+      var ctx = buildContextBlock(opts);
+      if (ctx) lines.push(ctx + '\nUse this context to resolve pronouns, omissions, and ambiguous terms. It is background only: do NOT translate the context itself, and do not let it change facts in the current utterance.');
+      lines.push('Begin translating as soon as each utterance is complete. Output the translation as speech, and nothing else.');
+      return lines.join('\n');
+    }
+
+    function buildSessionConfig(opts) {
+      var sp = SPEED[opts.speed] || SPEED.balanced;
+      var cfg = {
+        type: 'realtime',
+        model: sp.model,
+        instructions: buildInstructions(opts),
+        output_modalities: ['audio'],
+        audio: {
+          input: {
+            turn_detection: { type: 'semantic_vad', eagerness: sp.eagerness, create_response: true, interrupt_response: true },
+            transcription: { model: 'gpt-realtime-whisper' }
+          },
+          output: { voice: opts.voice }
+        }
+      };
+      if (opts.direction === 'oneway') {
+        cfg.audio.input.transcription.language = langByCode(opts.from).tr;
+      }
+      return cfg;
+    }
+
+    /* ---------- API key ---------- */
+    function getKey() {
+      try { return localStorage.getItem(LS_KEY) || ''; } catch (e) { return ''; }
+    }
+    function refreshKeyStatus() {
+      var k = getKey();
+      els.keyStatus.textContent = k ? 'キーは保存済みです（この端末のみ）。' : 'キーは未保存です。上の欄に貼って「キーを保存」を押してください。';
+      els.apiKeyInput.value = '';
+    }
+    els.saveKeyBtn.addEventListener('click', function () {
+      var v = els.apiKeyInput.value.trim();
+      if (!v) { els.keyStatus.textContent = 'キーが入力されていません。'; return; }
+      try {
+        localStorage.setItem(LS_KEY, v);
+        if (localStorage.getItem(LS_KEY) === v) {
+          els.keyStatus.textContent = 'キーを保存しました。';
+          log('APIキーを保存しました（値はログに出しません）。');
+        } else {
+          els.keyStatus.textContent = '保存を確認できませんでした。ブラウザの設定をご確認ください。';
+          log('APIキーの保存確認に失敗しました。');
+        }
+      } catch (e) {
+        els.keyStatus.textContent = '保存に失敗しました： ' + e.message;
+        log('APIキーの保存に失敗しました。');
+      }
+      els.apiKeyInput.value = '';
+    });
+    els.deleteKeyBtn.addEventListener('click', function () {
+      try {
+        localStorage.removeItem(LS_KEY);
+        if (!localStorage.getItem(LS_KEY)) {
+          els.keyStatus.textContent = 'キーを削除しました。';
+          log('APIキーを削除しました。');
+        } else {
+          els.keyStatus.textContent = '削除できませんでした（キーが残っています）。';
+          log('APIキーの削除を確認できませんでした。成功表示はしません。');
+        }
+      } catch (e) {
+        els.keyStatus.textContent = '削除に失敗しました： ' + e.message;
+        log('APIキーの削除に失敗しました。');
+      }
+    });
+
+    /* 認証系API：異常時は本文をログに出さず、HTTPステータスのみ記録する */
+    function fetchWithTimeout(url, options, timeoutMs) {
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+      var opts = {};
+      for (var k in options) opts[k] = options[k];
+      opts.signal = ctrl.signal;
+      return fetch(url, opts).then(function (r) { clearTimeout(timer); return r; }, function (e) { clearTimeout(timer); throw e; });
+    }
+
+    function mintSecret(signal) {
+      var key = getKey();
+      if (!key) return Promise.reject(new Error('APIキーが未保存です'));
+      var opts = getOptions();
+      return fetch(API_BASE + '/realtime/client_secrets', {
+        method: 'POST',
+        signal: signal,
+        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: buildSessionConfig(opts) })
+      }).then(function (res) {
+        if (!res.ok) {
+          log('シークレット発行失敗： HTTP ' + res.status + '（応答本文は表示しません）');
+          throw new Error('シークレット発行に失敗しました（HTTP ' + res.status + '）');
+        }
+        return res.json().then(function (data) {
+          if (!data || !data.value) {
+            log('シークレット応答の解析に失敗しました（value がありません）。');
+            throw new Error('シークレット応答の解析に失敗しました');
+          }
+          log('短命シークレットを発行しました。');
+          return { value: data.value, expires_at: data.expires_at || 0 };
+        }, function () {
+          log('シークレット応答の解析に失敗しました（JSONではありません）。');
+          throw new Error('シークレット応答の解析に失敗しました');
+        });
+      });
+    }
+
+    els.testKeyBtn.addEventListener('click', function () {
+      if (!getKey()) { els.keyStatus.textContent = '先にキーを保存してください。'; return; }
+      els.testKeyBtn.disabled = true;
+      els.keyStatus.textContent = '接続テスト中…（シークレット発行を試します）';
+      log('接続テスト：シークレット発行を試行します。');
+      var ctrl = new AbortController();
+      var to = setTimeout(function () { ctrl.abort(); }, 20000);
+      mintSecret(ctrl.signal).then(function () {
+        clearTimeout(to);
+        els.keyStatus.textContent = '接続テスト成功：シークレットを発行できました。';
+        log('接続テスト成功。');
+      }).catch(function (e) {
+        clearTimeout(to);
+        els.keyStatus.textContent = '接続テスト失敗： ' + e.message;
+        log('接続テスト失敗： ' + e.message);
+      }).then(function () { els.testKeyBtn.disabled = false; });
+    });
+
+    /* ---------- tabs ---------- */
+    var tabBtns = document.querySelectorAll('.tabs [data-tab]');
+    tabBtns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        tabBtns.forEach(function (b) { b.setAttribute('aria-selected', b === btn ? 'true' : 'false'); });
+        ['main', 'opts', 'set'].forEach(function (name) {
+          $('panel-' + name).hidden = name !== btn.getAttribute('data-tab');
+        });
+      });
+    });
+
+    /* ---------- language selects ---------- */
+    LANGS.forEach(function (l) {
+      var o1 = document.createElement('option'); o1.value = l.code; o1.textContent = l.name; els.langFrom.appendChild(o1);
+      var o2 = document.createElement('option'); o2.value = l.code; o2.textContent = l.name; els.langTo.appendChild(o2);
+    });
+    els.langFrom.value = 'ja';
+    els.langTo.value = 'zh-CN';
+    els.swapBtn.addEventListener('click', function () {
+      var a = els.langFrom.value; els.langFrom.value = els.langTo.value; els.langTo.value = a;
+      updateDirHint();
+      log('言語を入れ替えました： ' + langByCode(els.langFrom.value).name + ' → ' + langByCode(els.langTo.value).name);
+    });
+    function updateDirHint() {
+      var d = radioVal('direction');
+      els.dirHint.textContent = d === 'both'
+        ? 'ペア内の言語を自動判別し、もう一方へ訳します。'
+        : langByCode(els.langFrom.value).name + ' → ' + langByCode(els.langTo.value).name + ' に固定して訳します。';
+    }
+    document.querySelectorAll('input[name="direction"]').forEach(function (r) { r.addEventListener('change', updateDirHint); });
+    els.langFrom.addEventListener('change', updateDirHint);
+    els.langTo.addEventListener('change', updateDirHint);
+    updateDirHint();
+
+    /* ---------- session state ---------- */
+    var connState = 'idle'; // idle | connecting | live | recovering | stopping
+    var gen = 0;              // セッション世代（古い後片付けが新しいセッションを壊さないため）
+    var pc = null, dc = null, micStream = null, secret = null;
+    var connectAbort = null;
+    var sessionStartedAt = 0, timerInt = null, warned10 = false;
+    var recoverDeadline = 0, recoverInt = null;
+    var muted = false;
+    var liveSrcBuf = '', liveTgtBuf = '';
+    var currentSrcItemId = null;
+
+    function setConn(state, text) {
+      connState = state;
+      els.connBadge.className = 'badge' + (state === 'live' ? ' live' : state === 'connecting' ? ' connecting' : state === 'recovering' ? ' recovering' : state === 'error' ? ' error' : '');
+      els.connText.textContent = text;
+      var active = state === 'live' || state === 'recovering' || state === 'connecting';
+      els.startBtn.hidden = active;
+      els.stopBtn.hidden = !active;
+      els.muteBtn.disabled = state !== 'live';
+      els.retranslateBtn.disabled = state !== 'live';
+      els.textSendBtn.disabled = state !== 'live';
+    }
+    function setPlay(state, text) {
+      els.playText.textContent = '再生：' + text;
+      els.playBadge.className = 'badge' + (state === 'playing' ? ' live' : '');
+    }
+
+    function setLiveSrc(text, isFinal) {
+      liveSrcBuf = text;
+      els.liveSrc.innerHTML = '';
+      if (text) els.liveSrc.textContent = text;
+      else els.liveSrc.innerHTML = '<span class="placeholder">話した内容がここに文字で出ます</span>';
+    }
+    function setLiveTgt(text) {
+      liveTgtBuf = text;
+      els.liveTgt.innerHTML = '';
+      if (text) els.liveTgt.textContent = text;
+      else els.liveTgt.innerHTML = '<span class="placeholder">訳がここに出て、音声でも流れます</span>';
+    }
+
+    /* ---------- session timer ---------- */
+    function startTimer() {
+      sessionStartedAt = Date.now(); warned10 = false;
+      els.warnBanner.hidden = true;
+      els.timerText.className = 'timer';
+      els.timerText.textContent = '00:00 / 目安15分';
+      clearInterval(timerInt);
+      timerInt = setInterval(function () {
+        var sec = Math.floor((Date.now() - sessionStartedAt) / 1000);
+        var mm = Math.floor(sec / 60), ss = sec % 60;
+        els.timerText.textContent = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss + ' / 目安15分';
+        if (sec >= 600 && !warned10) {
+          warned10 = true;
+          els.warnBanner.hidden = false;
+          els.timerText.className = 'timer warn';
+          log('セッション10分経過（目安）。15分で自動停止します。');
+        }
+        if (sec >= 900) {
+          log('15分（目安）に達したため自動停止します。');
+          stopSession('15分の目安に到達');
+        }
+      }, 500);
+    }
+    function stopTimer() { clearInterval(timerInt); timerInt = null; els.timerText.textContent = '00:00 / 目安15分'; els.timerText.className = 'timer'; }
+
+    /* ---------- connect ---------- */
+    function waitForConnected(pcObj, dcObj, myGen, timeoutMs) {
+      return new Promise(function (resolve, reject) {
+        var done = false;
+        var to = setTimeout(function () { finish(new Error('接続がタイムアウトしました（PeerConnection / DataChannel 未開通）')); }, timeoutMs);
+        function check() {
+          if (pcObj.connectionState === 'connected' && dcObj.readyState === 'open') finish(null);
+          else if (pcObj.connectionState === 'failed') finish(new Error('PeerConnection が failed になりました'));
+        }
+        function finish(err) {
+          if (done) return; done = true; clearTimeout(to);
+          pcObj.removeEventListener('connectionstatechange', check);
+          dcObj.removeEventListener('open', check);
+          if (myGen !== gen) { reject(new Error('セッション世代が変わりました')); return; }
+          if (err) reject(err); else resolve();
+        }
+        pcObj.addEventListener('connectionstatechange', check);
+        dcObj.addEventListener('open', check);
+        check();
+      });
+    }
+
+    function startSession() {
+      if (connState === 'connecting' || connState === 'live' || connState === 'recovering') return;
+      if (!getKey()) {
+        log('APIキーが未保存のため開始できません。');
+        document.querySelector('[data-tab="set"]').click();
+        els.keyStatus.textContent = '先にAPIキーを保存してください。';
+        return;
+      }
+      if (!window.RTCPeerConnection) { log('このブラウザは WebRTC に対応していません。'); return; }
+      var myGen = ++gen;
+      setConn('connecting', '接続中…');
+      log('接続開始（世代 ' + myGen + '）。モデル： ' + (SPEED[getOptions().speed] || SPEED.balanced).model);
+      connectAbort = new AbortController();
+      var signal = connectAbort.signal;
+
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        if (myGen !== gen) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+        micStream = stream;
+        log('マイクを取得しました。');
+        stream.getAudioTracks().forEach(function (track) {
+          track.addEventListener('ended', function () {
+            if (myGen === gen && (connState === 'live' || connState === 'recovering')) {
+              log('マイク入力が終了しました。セッションを停止します。');
+              stopSession('マイク終了');
+            }
+          });
+        });
+        pc = new RTCPeerConnection();
+        stream.getTracks().forEach(function (t) { pc.addTrack(t, stream); });
+        dc = pc.createDataChannel('oai-events');
+        wireDataChannel(myGen);
+        wirePeerConnection(myGen);
+        pc.ontrack = function (e) {
+          els.remoteAudio.srcObject = e.streams[0];
+          tryPlayAudio();
+        };
+        // シークレット発行はマイク取得の後
+        return mintSecret(signal);
+      }).then(function (sec) {
+        if (!sec) return; // 世代が変わっていた場合
+        if (myGen !== gen) return;
+        secret = sec;
+        return pc.createOffer();
+      }).then(function (offer) {
+        if (!offer) return;
+        if (myGen !== gen) return;
+        return pc.setLocalDescription(offer).then(function () { return offer; });
+      }).then(function (offer) {
+        if (!offer) return;
+        if (myGen !== gen) return;
+        // SDP送信直前にシークレット期限を確認。切れそうなら再発行
+        var remainMs = secret.expires_at ? (secret.expires_at * 1000 - Date.now()) : 999999;
+        var prep = Promise.resolve();
+        if (remainMs < 20000) {
+          log('シークレットの残り期限が短いため再発行します。');
+          prep = mintSecret(signal).then(function (s) { secret = s; });
+        }
+        return prep.then(function () {
+          log('SDP offer を送信します。');
+          return fetchWithTimeout(API_BASE + '/realtime/calls', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + secret.value, 'Content-Type': 'application/sdp' },
+            body: offer.sdp
+          }, 25000);
+        });
+      }).then(function (res) {
+        if (!res) return;
+        if (myGen !== gen) return;
+        if (!res.ok) {
+          log('SDP交換失敗： HTTP ' + res.status + '（応答本文は表示しません）');
+          throw new Error('SDP交換に失敗しました（HTTP ' + res.status + '）');
+        }
+        return res.text();
+      }).then(function (sdpAnswer) {
+        if (!sdpAnswer) return;
+        if (myGen !== gen) return;
+        return pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
+      }).then(function () {
+        if (myGen !== gen) return;
+        log('SDP交換完了。PeerConnection接続とDataChannel開通を待っています…');
+        return waitForConnected(pc, dc, myGen, 25000);
+      }).then(function () {
+        if (myGen !== gen) return;
+        setConn('live', 'LIVE 通訳中');
+        log('LIVE：PeerConnection接続完了＋DataChannel開通を確認しました。');
+        sendSessionUpdate('セッション開始時の設定');
+        startTimer();
+        tryPlayAudio();
+      }).catch(function (e) {
+        if (myGen !== gen) return;
+        if (e && e.name === 'AbortError') { log('接続処理が中断されました。'); }
+        else log('接続に失敗しました： ' + (e && e.message ? e.message : e));
+        setConn('error', '接続失敗');
+        cleanupResources(myGen);
+        setTimeout(function () { if (myGen === gen && connState === 'error') setConn('idle', '未接続'); }, 2500);
+      });
+    }
+
+    function wirePeerConnection(myGen) {
+      pc.addEventListener('connectionstatechange', function () {
+        if (myGen !== gen) return;
+        log('PeerConnection状態： ' + pc.connectionState);
+        if (pc.connectionState === 'connected' && connState === 'recovering') {
+          clearInterval(recoverInt); recoverInt = null;
+          els.recoverBanner.hidden = true;
+          setConn('live', 'LIVE 通訳中');
+          log('接続が回復しました。');
+        }
+        if ((pc.connectionState === 'disconnected' || pc.connectionState === 'failed') && connState === 'live') {
+          enterRecovery(myGen, pc.connectionState);
+        }
+      });
+      pc.addEventListener('iceconnectionstatechange', function () {
+        if (myGen !== gen) return;
+        log('ICE状態： ' + pc.iceConnectionState);
+      });
+    }
+
+    function enterRecovery(myGen, reason) {
+      setConn('recovering', '接続回復待ち');
+      recoverDeadline = Date.now() + 20000;
+      els.recoverBanner.hidden = false;
+      log('接続が切れました（' + reason + '）。20秒間、接続回復待ちにします。');
+      clearInterval(recoverInt);
+      recoverInt = setInterval(function () {
+        if (myGen !== gen) { clearInterval(recoverInt); recoverInt = null; return; }
+        var left = Math.max(0, Math.ceil((recoverDeadline - Date.now()) / 1000));
+        els.recoverText.textContent = '接続回復待ち… 残り ' + left + ' 秒';
+        if (Date.now() >= recoverDeadline) {
+          clearInterval(recoverInt); recoverInt = null;
+          log('回復期限を過ぎたためセッションを停止します。');
+          stopSession('接続回復タイムアウト');
+        }
+      }, 250);
+    }
+
+    function wireDataChannel(myGen) {
+      dc.addEventListener('open', function () { if (myGen === gen) log('DataChannel が開きました。'); });
+      dc.addEventListener('close', function () {
+        if (myGen !== gen) return;
+        log('DataChannel が閉じました。');
+        if (connState === 'live') enterRecovery(myGen, 'DataChannel切断');
+        else if (connState === 'recovering') { /* 回復待ちを継続 */ }
+      });
+      dc.addEventListener('message', function (e) {
+        if (myGen !== gen) return;
+        var ev;
+        try { ev = JSON.parse(e.data); } catch (err) { log('受信イベントの解析に失敗しました。'); return; }
+        handleServerEvent(ev);
+      });
+    }
+
+    function dcSend(obj) {
+      if (dc && dc.readyState === 'open') {
+        dc.send(JSON.stringify(obj));
+        return true;
+      }
+      log('DataChannel未開通のため送信できませんでした： ' + obj.type);
+      return false;
+    }
+
+    function sendSessionUpdate(reason) {
+      var opts = getOptions();
+      var cfg = buildSessionConfig(opts);
+      if (dcSend({ type: 'session.update', session: cfg })) {
+        log('session.update を送信しました（' + reason + '）。文脈範囲：' + opts.ctxRange + '／場面：' + opts.scene + '／モデル：' + cfg.model + '（接続中モデルのまま）／eagerness：' + (SPEED[opts.speed] || SPEED.balanced).eagerness);
+        return true;
+      }
+      return false;
+    }
+
+    /* ---------- server events ---------- */
+    function handleServerEvent(ev) {
+      switch (ev.type) {
+        case 'session.created':
+          log('セッションが作成されました。');
+          break;
+        case 'session.updated':
+          log('セッション設定が反映されました。');
+          break;
+        case 'input_audio_buffer.speech_started':
+          // 新しい発話：前のターンのライブ表示をリセット
+          setLiveSrc('', false); setLiveTgt('');
+          currentSrcItemId = ev.item_id || null;
+          break;
+        case 'conversation.item.input_audio_transcription.delta': {
+          var d = (liveSrcBuf || '') + (ev.delta || '');
+          setLiveSrc(d, false);
+          break;
+        }
+        case 'conversation.item.input_audio_transcription.completed': {
+          var text = ev.transcript || liveSrcBuf || '';
+          setLiveSrc(text, true);
+          var t = earliestTurnMissing('src');
+          if (!t) t = newTurn('live');
+          if (!t.src) { t.src = text; t.at = Date.now(); }
+          renderHistory();
+          els.retranslateBtn.disabled = connState !== 'live' || !lastSourceText();
+          break;
+        }
+        case 'response.created':
+          break;
+        case 'response.output_audio_transcript.delta':
+          setLiveTgt((liveTgtBuf || '') + (ev.delta || ''));
+          break;
+        case 'response.output_audio_transcript.done': {
+          var out = ev.transcript || liveTgtBuf || '';
+          setLiveTgt(out);
+          var turn;
+          if (pendingForcedTurn) { turn = pendingForcedTurn; pendingForcedTurn = null; }
+          else turn = earliestTurnMissing('tgt') || newTurn('live');
+          if (!turn.tgt) turn.tgt = out;
+          renderHistory();
+          break;
+        }
+        case 'response.done':
+          if (ev.response && ev.response.status === 'failed') {
+            log('応答が失敗しました（response.done: failed）。');
+          }
+          break;
+        case 'response.output_audio.done':
+          break;
+        case 'error':
+          log('サーバーエラー： ' + (ev.error && ev.error.message ? ev.error.message : '不明なエラー'));
+          break;
+        default:
+          break;
+      }
+    }
+
+    function lastSourceText() {
+      for (var i = turns.length - 1; i >= 0; i--) if (turns[i].src) return turns[i].src;
+      return liveSrcBuf || '';
+    }
+
+    /* ---------- stop / cleanup ---------- */
+    var stopping = false;
+    function stopSession(reason) {
+      if (stopping) return;
+      if (connState === 'idle') return;
+      stopping = true;
+      var myGen = gen;
+      log('停止します（' + (reason || '手動') + '）。');
+      // 停止時は最後の訳文を確定してから片付ける
+      finalizePendingLive();
+      gen++; // 以後の古いコールバックを無効化
+      if (connectAbort) { try { connectAbort.abort(); } catch (e) {} connectAbort = null; }
+      cleanupResources(myGen);
+      stopTimer();
+      els.recoverBanner.hidden = true;
+      els.warnBanner.hidden = true;
+      setPlay('idle', '待機');
+      els.playBtn.hidden = true;
+      setConn('idle', '未接続');
+      stopping = false;
+    }
+    function finalizePendingLive() {
+      if (liveTgtBuf) {
+        var turn = pendingForcedTurn || earliestTurnMissing('tgt');
+        if (turn && !turn.tgt) { turn.tgt = liveTgtBuf; }
+        pendingForcedTurn = null;
+      }
+      if (liveSrcBuf) {
+        var t2 = earliestTurnMissing('src');
+        if (t2 && !t2.src) t2.src = liveSrcBuf;
+      }
+      renderHistory();
+    }
+    function cleanupResources(myGen) {
+      clearInterval(recoverInt); recoverInt = null;
+      if (dc) { try { dc.close(); } catch (e) {} dc = null; }
+      if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+      if (micStream) { micStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} }); micStream = null; }
+      els.remoteAudio.srcObject = null;
+      secret = null;
+      muted = false;
+      els.muteBtn.textContent = 'マイクをミュート';
+    }
+
+    els.startBtn.addEventListener('click', startSession);
+    els.stopBtn.addEventListener('click', function () { stopSession('手動停止'); });
+
+    els.muteBtn.addEventListener('click', function () {
+      if (!micStream) return;
+      muted = !muted;
+      micStream.getAudioTracks().forEach(function (t) { t.enabled = !muted; });
+      els.muteBtn.textContent = muted ? 'ミュート解除' : 'マイクをミュート';
+      log(muted ? 'マイクをミュートしました（課金は止まりません）。' : 'ミュートを解除しました。');
+    });
+
+    /* ---------- retranslate / text input ---------- */
+    els.retranslateBtn.addEventListener('click', function () {
+      if (connState !== 'live') return;
+      var src = lastSourceText();
+      if (!src) { log('訳し直す原文がありません。'); return; }
+      var opts = getOptions();
+      var from = langByCode(opts.from), to = langByCode(opts.to);
+      var dirText = opts.direction === 'both'
+        ? 'It is in either ' + from.en + ' or ' + to.en + '; translate it into the other one.'
+        : 'It is in ' + from.en + '; translate it into ' + to.en + '.';
+      var turn = newTurn('retranslate');
+      turn.src = src; turn.at = Date.now();
+      pendingForcedTurn = turn;
+      renderHistory();
+      var prompt = 'Re-translate the following utterance once more, now using the FULL conversation context, the scene, and the glossary to resolve pronouns, omissions, and ambiguous terms. Output ONLY the new translation, spoken aloud. ' + dirText + '\nUtterance: ' + src;
+      var ok = dcSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] } });
+      if (ok) { dcSend({ type: 'response.create' }); log('直前の発話の訳し直しを依頼しました。'); }
+      setLiveTgt('');
+    });
+
+    function sendTextInput() {
+      if (connState !== 'live') return;
+      var v = els.textInput.value.trim();
+      if (!v) return;
+      var turn = newTurn('text');
+      turn.src = v; turn.at = Date.now();
+      pendingForcedTurn = turn;
+      renderHistory();
+      var ok = dcSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: v }] } });
+      if (ok) { dcSend({ type: 'response.create' }); log('テキスト入力を文脈付きで翻訳依頼しました。'); }
+      els.textInput.value = '';
+      setLiveTgt('');
+    }
+    els.textSendBtn.addEventListener('click', sendTextInput);
+    els.textInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendTextInput(); } });
+
+    /* ---------- apply options mid-session ---------- */
+    els.applyBtn.addEventListener('click', function () {
+      var opts = getOptions();
+      if (connState === 'live' || connState === 'recovering') {
+        var ok = sendSessionUpdate('設定を反映');
+        els.applyMsg.textContent = ok
+          ? '接続中のセッションへ反映しました。モデルの変更（速度と精度）は次回接続時に適用されます。'
+          : 'DataChannel未開通のため反映できませんでした。次回接続時に適用されます。';
+      } else {
+        els.applyMsg.textContent = '保存しました。次回の接続開始時に適用されます。';
+        log('オプションを更新しました（次回接続時に適用）。');
+      }
+    });
+
+    /* ---------- audio playback / autoplay ---------- */
+    function tryPlayAudio() {
+      var a = els.remoteAudio;
+      if (!a.srcObject) { setPlay('idle', '待機'); return; }
+      var p = a.play();
+      if (p && p.catch) {
+        p.then(function () {
+          setPlay('playing', '再生中');
+          els.playBtn.hidden = true;
+        }).catch(function () {
+          setPlay('blocked', '自動再生できませんでした');
+          els.playBtn.hidden = false;
+          log('自動再生が拒否されました。「訳音声を再生する」ボタンを押してください。');
+        });
+      }
+    }
+    els.remoteAudio.addEventListener('playing', function () { setPlay('playing', '再生中'); els.playBtn.hidden = true; });
+    els.remoteAudio.addEventListener('pause', function () { if (connState === 'live') setPlay('paused', '一時停止中'); });
+    els.playBtn.addEventListener('click', function () { tryPlayAudio(); });
+
+    /* ---------- log buttons ---------- */
+    els.copyLogBtn.addEventListener('click', function () {
+      var text = els.logBox.textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { log('ログをコピーしました。'); }, function () { fallbackCopy(text); });
+      } else fallbackCopy(text);
+    });
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); log('ログをコピーしました。'); }
+      catch (e) { log('ログのコピーに失敗しました。'); }
+      document.body.removeChild(ta);
+    }
+    els.clearLogBtn.addEventListener('click', function () { els.logBox.textContent = ''; log('ログを消去しました。'); });
+
+    /* ---------- init ---------- */
+    setConn('idle', '未接続');
+    setPlay('idle', '待機');
+    refreshKeyStatus();
+    renderHistory();
+    log('アプリを起動しました。通常の Realtime API（汎用モデル）を使う方式です。翻訳専用モデル版より割高です。');
+    if (!getKey()) log('APIキーが未保存です。「設定・診断」タブで保存してください。');
+    </script>
+  </body>
+</html>
