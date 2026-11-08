@@ -150,6 +150,14 @@
       .live-text { font-size: 19px; line-height: 1.5; min-height: 1.5em; overflow-wrap: anywhere; }
       .live-text.tgt { font-size: 21px; font-weight: 600; }
       .live-text .placeholder { color: var(--muted); font-size: 14px; font-weight: 400; }
+      .live-text.tgt.keeping-prev { opacity: .8; }
+      .prev-tag {
+        display: inline-block; margin-left: 6px; padding: 1px 7px;
+        border: 1px solid var(--line); border-radius: 999px;
+        background: var(--surface-2); color: var(--muted);
+        font-size: 11px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px;
+      }
+      .prev-tag[hidden] { display: none; }
 
       .history { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 46vh; overflow-y: auto; }
       .history li { border-top: 1px solid var(--line); padding-top: 8px; }
@@ -254,7 +262,7 @@
             <div class="live-text" id="liveSrc"><span class="placeholder">話した内容がここに文字で出ます</span></div>
           </div>
           <div class="card live-pane">
-            <div class="pane-label">訳文</div>
+            <div class="pane-label">訳文<span class="prev-tag" id="liveTgtPrevTag" hidden>前の訳文を表示中</span></div>
             <div class="live-text tgt" id="liveTgt"><span class="placeholder">訳がここに出て、音声でも流れます</span></div>
           </div>
 
@@ -460,7 +468,7 @@
       playBtn: $('playBtn'),
       langFrom: $('langFrom'), langTo: $('langTo'), swapBtn: $('swapBtn'), dirHint: $('dirHint'),
       startBtn: $('startBtn'), stopBtn: $('stopBtn'), muteBtn: $('muteBtn'), retranslateBtn: $('retranslateBtn'),
-      liveSrc: $('liveSrc'), liveTgt: $('liveTgt'),
+      liveSrc: $('liveSrc'), liveTgt: $('liveTgt'), liveTgtPrevTag: $('liveTgtPrevTag'),
       textInput: $('textInput'), textSendBtn: $('textSendBtn'),
       historyList: $('historyList'), historyEmpty: $('historyEmpty'),
       scenePreset: $('scenePreset'), sceneMemo: $('sceneMemo'), glossary: $('glossary'),
@@ -767,6 +775,7 @@
     var recoverDeadline = 0, recoverInt = null;
     var muted = false;
     var liveSrcBuf = '', liveTgtBuf = '';
+    var tgtPendingReplace = false; // true の間、画面の訳文は「直前の訳文」で、次の訳文の表示開始まで保持する
     var currentSrcItemId = null;
 
     function setConn(state, text) {
@@ -796,6 +805,24 @@
       els.liveTgt.innerHTML = '';
       if (text) els.liveTgt.textContent = text;
       else els.liveTgt.innerHTML = '<span class="placeholder">訳がここに出て、音声でも流れます</span>';
+    }
+    /* 新しい入力・訳し直し・テキスト送信が始まっても訳文を消さず、
+       次の訳文が表示される直前まで直前の訳文をそのまま残す */
+    function keepPreviousTgt() {
+      tgtPendingReplace = true;
+      if (liveTgtBuf) {
+        els.liveTgt.classList.add('keeping-prev');
+        if (els.liveTgtPrevTag) els.liveTgtPrevTag.hidden = false;
+      }
+    }
+    function endKeepPreviousTgt() {
+      tgtPendingReplace = false;
+      els.liveTgt.classList.remove('keeping-prev');
+      if (els.liveTgtPrevTag) els.liveTgtPrevTag.hidden = true;
+    }
+    function replaceLiveTgt(text) {
+      endKeepPreviousTgt();
+      setLiveTgt(text);
     }
 
     /* ---------- session timer ---------- */
@@ -1026,8 +1053,8 @@
           log('セッション設定が反映されました。');
           break;
         case 'input_audio_buffer.speech_started':
-          // 新しい発話：前のターンのライブ表示をリセット
-          setLiveSrc('', false); setLiveTgt('');
+          // 新しい発話：原文はリセットするが、訳文は次の訳が表示される直前まで直前のものを残す
+          setLiveSrc('', false); keepPreviousTgt();
           currentSrcItemId = ev.item_id || null;
           break;
         case 'conversation.item.input_audio_transcription.delta': {
@@ -1047,12 +1074,28 @@
         }
         case 'response.created':
           break;
-        case 'response.output_audio_transcript.delta':
-          setLiveTgt((liveTgtBuf || '') + (ev.delta || ''));
+        case 'response.output_audio_transcript.delta': {
+          var delta = ev.delta || '';
+          if (!delta) break;
+          // 次の訳文の最初のチャンクが届いたこの瞬間に、保持していた直前の訳文と入れ替える
+          if (tgtPendingReplace) replaceLiveTgt(delta);
+          else setLiveTgt((liveTgtBuf || '') + delta);
           break;
+        }
         case 'response.output_audio_transcript.done': {
-          var out = ev.transcript || liveTgtBuf || '';
-          setLiveTgt(out);
+          var out;
+          if (tgtPendingReplace) {
+            out = ev.transcript || '';
+            if (!out) {
+              // 新しい訳文のテキストが届かなかった場合は、直前の訳文表示を消さずに残す
+              endKeepPreviousTgt();
+              break;
+            }
+            replaceLiveTgt(out);
+          } else {
+            out = ev.transcript || liveTgtBuf || '';
+            setLiveTgt(out);
+          }
           var turn;
           if (pendingForcedTurn) { turn = pendingForcedTurn; pendingForcedTurn = null; }
           else turn = earliestTurnMissing('tgt') || newTurn('live');
@@ -1102,11 +1145,13 @@
       stopping = false;
     }
     function finalizePendingLive() {
-      if (liveTgtBuf) {
+      if (liveTgtBuf && !tgtPendingReplace) {
         var turn = pendingForcedTurn || earliestTurnMissing('tgt');
         if (turn && !turn.tgt) { turn.tgt = liveTgtBuf; }
         pendingForcedTurn = null;
       }
+      // 訳待ち中の表示は直前の訳文なので、新しいターンの訳として確定しない
+      if (tgtPendingReplace) endKeepPreviousTgt();
       if (liveSrcBuf) {
         var t2 = earliestTurnMissing('src');
         if (t2 && !t2.src) t2.src = liveSrcBuf;
@@ -1151,8 +1196,7 @@
       renderHistory();
       var prompt = 'Re-translate the following utterance once more, now using the FULL conversation context, the scene, and the glossary to resolve pronouns, omissions, and ambiguous terms. Output ONLY the new translation, spoken aloud. ' + dirText + '\nUtterance: ' + src;
       var ok = dcSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] } });
-      if (ok) { dcSend({ type: 'response.create' }); log('直前の発話の訳し直しを依頼しました。'); }
-      setLiveTgt('');
+      if (ok) { dcSend({ type: 'response.create' }); log('直前の発話の訳し直しを依頼しました。'); keepPreviousTgt(); }
     });
 
     function sendTextInput() {
@@ -1164,9 +1208,8 @@
       pendingForcedTurn = turn;
       renderHistory();
       var ok = dcSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: v }] } });
-      if (ok) { dcSend({ type: 'response.create' }); log('テキスト入力を文脈付きで翻訳依頼しました。'); }
+      if (ok) { dcSend({ type: 'response.create' }); log('テキスト入力を文脈付きで翻訳依頼しました。'); keepPreviousTgt(); }
       els.textInput.value = '';
-      setLiveTgt('');
     }
     els.textSendBtn.addEventListener('click', sendTextInput);
     els.textInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendTextInput(); } });
