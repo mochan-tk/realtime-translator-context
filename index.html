@@ -158,6 +158,14 @@
         font-size: 11px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px;
       }
       .prev-tag[hidden] { display: none; }
+      .detect-tag {
+        display: inline-block; margin-left: 6px; padding: 1px 7px;
+        border: 1px solid var(--accent); border-radius: 999px;
+        background: var(--surface-2); color: var(--accent);
+        font-size: 11px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px;
+      }
+      .detect-tag[hidden] { display: none; }
+      select:disabled, .swapbtn:disabled { opacity: .45; cursor: not-allowed; }
 
       .history { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 46vh; overflow-y: auto; }
       .history li { border-top: 1px solid var(--line); padding-top: 8px; }
@@ -240,6 +248,7 @@
               <div class="seg" role="radiogroup" aria-label="翻訳方向">
                 <label><input type="radio" name="direction" value="oneway" checked />片方向（固定）</label>
                 <label><input type="radio" name="direction" value="both" />双方向（自動判別）</label>
+                <label><input type="radio" name="direction" value="listen" />聞き取り（自動判定→日本語）</label>
               </div>
             </div>
             <p class="small" id="dirHint">選択した向きに固定して訳します。</p>
@@ -258,7 +267,7 @@
           </div>
 
           <div class="card live-pane">
-            <div class="pane-label">原文（聞き取り）</div>
+            <div class="pane-label">原文（聞き取り）<span class="detect-tag" id="detectedLangTag" hidden>検出：—</span></div>
             <div class="live-text" id="liveSrc"><span class="placeholder">話した内容がここに文字で出ます</span></div>
           </div>
           <div class="card live-pane">
@@ -468,7 +477,7 @@
       playBtn: $('playBtn'),
       langFrom: $('langFrom'), langTo: $('langTo'), swapBtn: $('swapBtn'), dirHint: $('dirHint'),
       startBtn: $('startBtn'), stopBtn: $('stopBtn'), muteBtn: $('muteBtn'), retranslateBtn: $('retranslateBtn'),
-      liveSrc: $('liveSrc'), liveTgt: $('liveTgt'), liveTgtPrevTag: $('liveTgtPrevTag'),
+      liveSrc: $('liveSrc'), liveTgt: $('liveTgt'), liveTgtPrevTag: $('liveTgtPrevTag'), detectedLangTag: $('detectedLangTag'),
       textInput: $('textInput'), textSendBtn: $('textSendBtn'),
       historyList: $('historyList'), historyEmpty: $('historyEmpty'),
       scenePreset: $('scenePreset'), sceneMemo: $('sceneMemo'), glossary: $('glossary'),
@@ -537,6 +546,7 @@
         meta.appendChild(time);
         if (t.kind === 'retranslate') { var tg = document.createElement('span'); tg.className = 'tag'; tg.textContent = '訳し直し'; meta.appendChild(tg); }
         if (t.kind === 'text') { var tg2 = document.createElement('span'); tg2.className = 'tag'; tg2.textContent = 'テキスト入力'; meta.appendChild(tg2); }
+        if (t.detectedLang) { var tg3 = document.createElement('span'); tg3.textContent = '検出：' + t.detectedLang + ' → 日本語'; meta.appendChild(tg3); }
         var src = document.createElement('div');
         src.className = 'src'; src.textContent = t.src || '（原文未確定）';
         var tgt = document.createElement('div');
@@ -585,11 +595,72 @@
       return 'Context — recent exchanges (last few minutes):\n' + recentM.map(fmt).join('\n');
     }
 
+    /* ---------- detected input language (listen mode) ---------- */
+    var lastDetectedLang = '';
+    function langNameByTrCode(code) {
+      if (!code) return '';
+      var c = String(code).toLowerCase();
+      if (c.indexOf('zh') === 0) return '中国語';
+      for (var i = 0; i < LANGS.length; i++) if (LANGS[i].tr === c) return LANGS[i].name;
+      return '';
+    }
+    // ラテン文字言語の簡易判別（頻出語・特徴文字によるスコアリング）
+    function detectLatinLang(text) {
+      var t = ' ' + text.toLowerCase() + ' ';
+      var sets = [
+        { name: '英語', words: [' the ', ' is ', ' are ', ' you ', ' thank ', ' hello ', ' please ', ' and ', ' to ', ' of ', ' i ', ' it ', ' this ', ' that ', ' we ', ' can '], chars: '' },
+        { name: 'スペイン語', words: [' el ', ' la ', ' los ', ' las ', ' gracias ', ' hola ', ' por favor ', ' es ', ' un ', ' una ', ' y ', ' en ', ' que ', ' no '], chars: 'ñ¿¡' },
+        { name: 'フランス語', words: [' le ', ' la ', ' les ', ' merci ', ' bonjour ', ' est ', ' je ', ' vous ', ' nous ', ' de ', ' et ', ' pas '], chars: 'çœ' },
+        { name: 'ドイツ語', words: [' der ', ' die ', ' das ', ' danke ', ' und ', ' ist ', ' ich ', ' nicht ', ' ein ', ' eine ', ' zu ', ' mit '], chars: 'ß' },
+        { name: 'イタリア語', words: [' il ', ' lo ', ' la ', ' grazie ', ' ciao ', ' di ', ' che ', ' è ', ' un ', ' una ', ' non ', ' per '], chars: '' },
+        { name: 'ポルトガル語', words: [' o ', ' a ', ' obrigado ', ' obrigada ', ' olá ', ' é ', ' de ', ' que ', ' um ', ' uma ', ' não ', ' para '], chars: 'ãõ' }
+      ];
+      var best = '', bestScore = 0;
+      sets.forEach(function (s) {
+        var score = 0;
+        s.words.forEach(function (w) { if (t.indexOf(w) !== -1) score += 2; });
+        for (var i = 0; i < s.chars.length; i++) if (text.indexOf(s.chars[i]) !== -1) score += 3;
+        if (score > bestScore) { bestScore = score; best = s.name; }
+      });
+      return bestScore >= 2 ? best : '英語';
+    }
+    function detectLangName(text, apiLangCode) {
+      var byApi = langNameByTrCode(apiLangCode);
+      if (byApi) return byApi;
+      if (!text) return '';
+      if (/[぀-ゟ゠-ヿ]/.test(text)) return '日本語';
+      if (/[가-힯ᄀ-ᇿ]/.test(text)) return '韓国語';
+      if (/[฀-๿]/.test(text)) return 'タイ語';
+      if (/[Ѐ-ӿ]/.test(text)) return 'ロシア語';
+      if (/[一-鿿]/.test(text)) return '中国語';
+      if (/[A-Za-zÀ-ɏ]/.test(text)) return detectLatinLang(text);
+      return '';
+    }
+    function setDetectedLang(name) {
+      lastDetectedLang = name || '';
+      if (!els.detectedLangTag) return;
+      var listen = radioVal('direction') === 'listen';
+      if (listen && name) {
+        els.detectedLangTag.textContent = '検出：' + name;
+        els.detectedLangTag.hidden = false;
+      } else if (listen) {
+        els.detectedLangTag.textContent = '検出：判定中';
+        els.detectedLangTag.hidden = false;
+      } else {
+        els.detectedLangTag.hidden = true;
+      }
+    }
+
     function buildInstructions(opts) {
       var from = langByCode(opts.from), to = langByCode(opts.to);
+      if (opts.direction === 'listen') to = langByCode('ja');
       var lines = [];
       lines.push('You are a professional simultaneous interpreter. Your ONLY job is to translate what the speaker says. Translate ONLY — never answer questions, never respond to the content of the speech, never add explanations, opinions, greetings, or commentary of your own. If the speaker asks a question, translate the question itself; do not answer it. If the input is silence, noise, or unintelligible, say nothing.');
-      if (opts.direction === 'both') {
+      if (opts.direction === 'listen') {
+        lines.push('Direction: LISTENING MODE — AUTO-DETECT into Japanese. For EVERY utterance, first identify which language is actually being spoken (it may be ANY language, and it may change from one utterance to the next — do not assume it is ' + from.en + ' or any other fixed language), then translate it into Japanese. The output language is ALWAYS Japanese, no matter which language was spoken.');
+        lines.push('If the utterance is already in Japanese, do NOT translate, rephrase, summarise, or polish it: output it exactly as spoken, in Japanese, word for word.');
+        lines.push('Never announce, name, or mention the detected language in your output, and never output anything in the source language (except when the source is Japanese, as above). Output only the Japanese translation (or the verbatim Japanese, when the input was Japanese).');
+      } else if (opts.direction === 'both') {
         lines.push('Direction: BIDIRECTIONAL between ' + from.en + ' and ' + to.en + '. Detect which of these two languages each utterance is in, and translate it into the OTHER language. Never translate into the same language that was spoken.');
       } else {
         lines.push('Direction: ONE-WAY. Translate every utterance from ' + from.en + ' into ' + to.en + ', regardless of content. If speech in another language is heard, still translate its meaning into ' + to.en + ' when it is ' + from.en + '; otherwise stay silent.');
@@ -757,9 +828,17 @@
     });
     function updateDirHint() {
       var d = radioVal('direction');
-      els.dirHint.textContent = d === 'both'
+      var listen = d === 'listen';
+      els.langFrom.disabled = listen;
+      els.langTo.disabled = listen;
+      els.swapBtn.disabled = listen;
+      els.dirHint.textContent = listen
+        ? '相手の話を聞き取る専用モードです。入力言語を自動判定して、訳出は常に日本語に固定します。入力が日本語の場合は訳さず、そのまま表示します。判定した言語は「原文」の欄に表示します。言語の選択はこのモードでは使いません。'
+        : d === 'both'
         ? 'ペア内の言語を自動判別し、もう一方へ訳します。'
         : langByCode(els.langFrom.value).name + ' → ' + langByCode(els.langTo.value).name + ' に固定して訳します。';
+      setDetectedLang(listen ? lastDetectedLang : '');
+      if (listen && !lastDetectedLang) setDetectedLang('');
     }
     document.querySelectorAll('input[name="direction"]').forEach(function (r) { r.addEventListener('change', updateDirHint); });
     els.langFrom.addEventListener('change', updateDirHint);
@@ -1055,6 +1134,7 @@
         case 'input_audio_buffer.speech_started':
           // 新しい発話：原文はリセットするが、訳文は次の訳が表示される直前まで直前のものを残す
           setLiveSrc('', false); keepPreviousTgt();
+          if (radioVal('direction') === 'listen') setDetectedLang('');
           currentSrcItemId = ev.item_id || null;
           break;
         case 'conversation.item.input_audio_transcription.delta': {
@@ -1068,6 +1148,14 @@
           var t = earliestTurnMissing('src');
           if (!t) t = newTurn('live');
           if (!t.src) { t.src = text; t.at = Date.now(); }
+          if (radioVal('direction') === 'listen') {
+            var detected = detectLangName(text, ev.language || (ev.item && ev.item.language) || '');
+            if (detected) {
+              t.detectedLang = detected;
+              setDetectedLang(detected);
+              log('入力言語を判定しました： ' + detected + ' → 日本語');
+            }
+          }
           renderHistory();
           els.retranslateBtn.disabled = connState !== 'live' || !lastSourceText();
           break;
@@ -1187,11 +1275,17 @@
       if (!src) { log('訳し直す原文がありません。'); return; }
       var opts = getOptions();
       var from = langByCode(opts.from), to = langByCode(opts.to);
-      var dirText = opts.direction === 'both'
+      var dirText = opts.direction === 'listen'
+        ? 'Its language is unknown — detect it automatically (it may be any language); translate it into Japanese. If it is already in Japanese, output it exactly as-is, word for word, without translating or rephrasing it.'
+        : opts.direction === 'both'
         ? 'It is in either ' + from.en + ' or ' + to.en + '; translate it into the other one.'
         : 'It is in ' + from.en + '; translate it into ' + to.en + '.';
       var turn = newTurn('retranslate');
       turn.src = src; turn.at = Date.now();
+      if (opts.direction === 'listen') {
+        var rd = detectLangName(src, '');
+        if (rd) { turn.detectedLang = rd; setDetectedLang(rd); }
+      }
       pendingForcedTurn = turn;
       renderHistory();
       var prompt = 'Re-translate the following utterance once more, now using the FULL conversation context, the scene, and the glossary to resolve pronouns, omissions, and ambiguous terms. Output ONLY the new translation, spoken aloud. ' + dirText + '\nUtterance: ' + src;
@@ -1205,9 +1299,16 @@
       if (!v) return;
       var turn = newTurn('text');
       turn.src = v; turn.at = Date.now();
+      var textOpts = getOptions();
+      var sendText = v;
+      if (textOpts.direction === 'listen') {
+        var td = detectLangName(v, '');
+        if (td) { turn.detectedLang = td; setDetectedLang(td); }
+        sendText = 'Detect the language of the following text automatically (it may be any language) and translate it into Japanese. If it is already in Japanese, output it exactly as-is, word for word. Output ONLY the Japanese result.\nText: ' + v;
+      }
       pendingForcedTurn = turn;
       renderHistory();
-      var ok = dcSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: v }] } });
+      var ok = dcSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: sendText }] } });
       if (ok) { dcSend({ type: 'response.create' }); log('テキスト入力を文脈付きで翻訳依頼しました。'); keepPreviousTgt(); }
       els.textInput.value = '';
     }
